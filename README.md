@@ -1,44 +1,48 @@
 # ✦ NeuralDesk — Focus Operating System
 
-An intermediate-level productivity workspace with an Apple-inspired 3D/glassmorphism interface, soft aurora gradients, floaty orb, hover lift, interactive task management, focus timer, and productivity insights.
+An intermediate-level productivity workspace built with Streamlit and Plotly. It pairs an Apple-inspired visual language with real task-management and focus workflows: glass-like panels, soft aurora lighting, a softly animated 3D-feeling orb, carefully tuned hover states, and responsive layouts.
 
-ECC-inspired engineering approach: research-first, small explicit functions, controlled state, clear validation, and a practical verification checklist. This project references the workflow philosophy from [ECC](https://github.com/affaan-m/ECC); it does not copy ECC's source code or bundle its skills.
+## Experience
 
-## What works
+- **Overview:** today's task snapshot, completion progress, open priorities, and a focused action board.
+- **Task manager:** create, prioritize, filter, complete, clear, and export tasks as JSON.
+- **Focus mode:** set a 15–60 minute Pomodoro-style session and save the intention for your current session.
+- **Insights:** interactive Plotly charts for task completion and projects.
+- **No API key required.** Current features work locally inside the Streamlit app session.
+- **Accessibility-minded motion:** prefers-reduced-motion support and responsive spacing.
 
-- **Overview:** overview metrics, action board, daily progress.
-- **Tasks:** add tasks, set project and priority, mark complete, filter lists, clear completed items, export as JSON.
-- **Focus:** configure a 15–60 minute Pomodoro-style session, start/pause/reset, save an intention.
-- **Insights:** Plotly task-status and project charts.
-- **No API keys required:** the current app is functional without paid external services.
-- **Responsive premium UI:** midnight palette, glass panels, ambient gradients, animated orb, subtle hover and motion-reduction support.
+## ECC-inspired engineering
+
+Workflow principles were informed by [ECC](https://github.com/affaan-m/ECC) and its [frontend-design-direction skill](https://github.com/affaan-m/ECC/tree/main/skills/frontend-design-direction). This repository is a distinct implementation and does not copy or package ECC code or skills.
 
 ## Run locally
 
-Python 3.10+ recommended.
+Python 3.10 or newer is recommended.
 
 ```bash
 py -m pip install -r requirements.txt
 py -m streamlit run app.py
 ```
 
-If `py` is unavailable on your machine, install Python and use `python -m pip` and `python -m streamlit run app.py`.
+On a system where `py` is unavailable, use `python -m pip install -r requirements.txt` and `python -m streamlit run app.py`.
+
+## Run helper tests
+
+```bash
+py -m pip install pytest
+py -m pytest -q
+```
 
 ## Deploy to Streamlit Community Cloud
 
-1. Visit https://share.streamlit.io/ and sign in with GitHub.
+1. Go to https://share.streamlit.io/ and sign in with GitHub.
 2. Select this repository.
-3. Set **Main file path** to `app.py`.
-4. Deploy. No secrets are needed.
+3. Set the main file to `app.py`.
+4. Click **Deploy**. No secrets are required.
 
-## Data and limitations
+## Data notes
 
-Streamlit session state keeps changes while that app session is active, but it is not a durable database. Export your tasks as JSON if you need a backup. The timer is a simple session timer, not a background service, and its countdown may require refreshing the page.
-
-## Inspiration
-
-- [ECC — agentic engineering workflows and reusable skills](https://github.com/affaan-m/ECC)
-- Visual direction: Apple-inspired dark glass, depth, aurora gradients, and understated motion.
+Tasks and settings are held in the active Streamlit session, not a durable database. Export your task list as JSON for a backup. The focus timer is a lightweight session timer and is not a background service; a refresh may be needed to update the visible time.
 
 ## License
 
