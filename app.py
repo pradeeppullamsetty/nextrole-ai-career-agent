@@ -186,6 +186,8 @@ elif active_view == "Focus":
             st.session_state.focus_deadline = time.time() + st.session_state.focus_seconds
             st.rerun()
         if p2.button("Ⅱ Pause", use_container_width=True):
+            if st.session_state.focus_deadline is not None:
+                st.session_state.focus_seconds = max(0, int(st.session_state.focus_deadline - time.time()))
             st.session_state.timer_running = False
             st.session_state.focus_deadline = None
         if p3.button("↺ Reset", use_container_width=True):
