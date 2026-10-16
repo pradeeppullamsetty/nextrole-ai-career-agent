@@ -5,6 +5,7 @@ from datetime import date
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 from app_testable import build_task_summary, task_completion_rate
 
@@ -27,6 +28,8 @@ if "task_counter" not in st.session_state:
     st.session_state.task_counter = 4
 if "focus_intention_saved" not in st.session_state:
     st.session_state.focus_intention_saved = ""
+if "focus_deadline" not in st.session_state:
+    st.session_state.focus_deadline = None
 
 CSS = """
 <style>
@@ -168,26 +171,33 @@ elif active_view == "Focus":
     st.markdown('<div class="hero"><div class="eyebrow">FOCUS MODE</div><h1>Enter your<br><span class="grad">flow state.</span></h1><p class="small">One session. One intention. Fewer interruptions.</p></div>', unsafe_allow_html=True)
     left, right = st.columns([1, 1], gap="large")
     with left:
+        if st.session_state.timer_running and st.session_state.focus_deadline is not None:
+            st.session_state.focus_seconds = max(0, int(st.session_state.focus_deadline - time.time()))
+            if st.session_state.focus_seconds <= 0:
+                st.session_state.timer_running = False
+                st.session_state.focus_deadline = None
+                st.success("Focus session complete. Take a mindful break.")
         mins, secs = divmod(max(0, int(st.session_state.focus_seconds)), 60)
         st.markdown('<div class="glass" style="text-align:center"><div class="kicker">POMODORO SESSION</div></div>', unsafe_allow_html=True)
         st.markdown(f'<div class="glass" style="text-align:center;margin-top:12px"><div style="font-family:Manrope;font-size:clamp(3.5rem,8vw,5.5rem);font-weight:800;letter-spacing:-.08em">{mins:02d}:{secs:02d}</div><div class="small">{"Session running" if st.session_state.timer_running else "Ready when you are"}</div></div>', unsafe_allow_html=True)
         p1, p2, p3 = st.columns(3)
         if p1.button("▶ Start / resume", use_container_width=True):
             st.session_state.timer_running = True
-            st.session_state.timer_last = time.time()
+            st.session_state.focus_deadline = time.time() + st.session_state.focus_seconds
             st.rerun()
         if p2.button("Ⅱ Pause", use_container_width=True):
             st.session_state.timer_running = False
+            st.session_state.focus_deadline = None
         if p3.button("↺ Reset", use_container_width=True):
             st.session_state.timer_running = False
             st.session_state.focus_seconds = 25 * 60
-            st.session_state.timer_last = time.time()
+            st.session_state.focus_deadline = None
             st.rerun()
         length = st.select_slider("Session length", options=[15, 20, 25, 30, 45, 60], value=25, format_func=lambda x: f"{x} min")
         if st.button("Set session length"):
             st.session_state.focus_seconds = int(length * 60)
             st.session_state.timer_running = False
-            st.session_state.timer_last = time.time()
+            st.session_state.focus_deadline = None
             st.rerun()
     with right:
         st.markdown('<div class="glass"><div class="kicker">YOUR INTENTION</div><h3>Before you begin</h3><p style="color:#aab2c9;line-height:1.8">Write one clear outcome for this focus block. A smaller finish line is easier to start and easier to cross.</p></div>', unsafe_allow_html=True)
@@ -198,8 +208,20 @@ elif active_view == "Focus":
         if st.session_state.focus_intention_saved:
             st.markdown(f'<div class="glass-lite"><div class="kicker">CURRENT INTENTION</div><p>{st.session_state.focus_intention_saved}</p></div>', unsafe_allow_html=True)
         st.markdown('<div class="glass-lite" style="margin-top:14px"><b>Focus ritual</b><p class="small" style="line-height:1.8">1. Close one distraction. 2. Keep one tab open. 3. Start before you feel ready. 4. Stop when the timer ends.</p></div>', unsafe_allow_html=True)
-    if st.session_state.timer_running:
-        st.info("The timer keeps its timestamp while this session is active. Refresh the page to update the displayed countdown.")
+    if st.session_state.timer_running and st.session_state.focus_deadline is not None:
+        deadline_ms = int(st.session_state.focus_deadline * 1000)
+        components.html(f"""<script>
+          const deadline = {deadline_ms};
+          const tick = () => {{
+            const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+            const displays = Array.from(window.parent.document.querySelectorAll("div"))
+              .filter(el => /^\\d{{2}}:\\d{{2}}$/.test((el.textContent || "").trim()));
+            if (displays.length) displays[displays[displays.length - 1].textContent =
+              String(Math.floor(left / 60)).padStart(2, "0") + ":" + String(left % 60).padStart(2, "0");
+            if (left <= 0) window.parent.location.reload();
+          }};
+          tick(); setInterval(tick, 1000);
+        </script>""", height=0, scrolling=False)
 
 elif active_view == "Insights":
     st.markdown('<div class="hero"><div class="eyebrow">INSIGHTS</div><h1>Progress you<br><span class="grad">can see.</span></h1><p class="small">A live view of the tasks you have captured in this session.</p></div>', unsafe_allow_html=True)
