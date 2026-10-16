@@ -1,276 +1,258 @@
-import io
-import re
-import html
-from collections import Counter
+import json
+import time
+from datetime import date, datetime, timedelta
 
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
-try:
-    from pypdf import PdfReader
-except Exception:
-    PdfReader = None
+st.set_page_config(page_title="NeuralDesk · Focus OS", page_icon="✦", layout="wide", initial_sidebar_state="collapsed")
 
-try:
-    from docx import Document
-except Exception:
-    Document = None
-
-st.set_page_config(
-    page_title="NextRole — Career Studio",
-    page_icon="✦",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
+# ECC-inspired workflow: inspect inputs, validate state, build small functions, keep interactions explicit.
+DEFAULT_TASKS = [
+    {"id": 1, "title": "Finish UI polish", "project": "NeuralDesk", "priority": "High", "done": False, "due": "Today"},
+    {"id": 2, "title": "Review Python fundamentals", "project": "Learning", "priority": "Medium", "done": False, "due": "Today"},
+    {"id": 3, "title": "Update project README", "project": "Portfolio", "priority": "Low", "done": True, "due": "Today"},
+]
+if "tasks" not in st.session_state:
+    st.session_state.tasks = DEFAULT_TASKS.copy()
+if "focus_seconds" not in st.session_state:
+    st.session_state.focus_seconds = 25 * 60
+if "timer_running" not in st.session_state:
+    st.session_state.timer_running = False
+if "timer_last" not in st.session_state:
+    st.session_state.timer_last = time.time()
+if "task_counter" not in st.session_state:
+    st.session_state.task_counter = 4
+if "active_view" not in st.session_state:
+    st.session_state.active_view = "Overview"
 
 CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
-:root { --ink:#f5f6fb; --muted:#a4a9bc; --line:rgba(255,255,255,.12); --glass:rgba(255,255,255,.055); }
-html, body, [class*="css"] { font-family:'DM Sans',sans-serif; }
-.stApp {
- background:
- radial-gradient(ellipse at 12% 0%, rgba(105,93,255,.22), transparent 38%),
- radial-gradient(ellipse at 92% 8%, rgba(74,194,255,.13), transparent 32%),
- radial-gradient(ellipse at 50% 100%, rgba(183,102,255,.11), transparent 45%),
- #080a11;
- color:var(--ink);
-}
-[data-testid="stHeader"] { background:rgba(8,10,17,.55); }
-.block-container { max-width:1280px; padding-top:1.4rem; padding-bottom:4rem; }
-h1,h2,h3 { font-family:'Manrope',sans-serif!important; letter-spacing:-.045em; }
-h1 { font-size:clamp(2.6rem,5vw,4.8rem)!important; line-height:1.02!important; font-weight:800!important; }
-p, label, .stMarkdown { color:#dfe2ef; }
-[data-testid="stVerticalBlockBorderWrapper"] {
- border:1px solid var(--line); border-radius:24px;
- background:linear-gradient(145deg,rgba(255,255,255,.075),rgba(255,255,255,.025));
- box-shadow:0 18px 60px rgba(0,0,0,.16); backdrop-filter:blur(18px);
-}
-div[data-testid="stTextArea"] textarea, div[data-testid="stTextInput"] input {
- background:rgba(255,255,255,.045)!important; color:#f5f6fb!important;
- border:1px solid rgba(255,255,255,.14)!important; border-radius:15px!important;
-}
-.stButton>button, .stDownloadButton>button {
- border:1px solid rgba(255,255,255,.18); border-radius:999px; padding:.65rem 1.2rem;
- background:linear-gradient(115deg,#d9d8ff,#a8dfff); color:#10121b; font-weight:700;
- transition:all .22s ease; box-shadow:0 6px 26px rgba(127,130,255,.17);
-}
-.stButton>button:hover, .stDownloadButton>button:hover {
- transform:translateY(-2px); box-shadow:0 10px 34px rgba(127,130,255,.32);
- border-color:rgba(255,255,255,.6);
-}
-[data-testid="stFileUploader"] section { background:rgba(255,255,255,.035); border:1px dashed rgba(190,195,255,.3); border-radius:18px; }
-[data-testid="stMetric"] { background:rgba(255,255,255,.04); border:1px solid var(--line); padding:18px; border-radius:18px; }
-[data-testid="stMetricValue"] { font-family:'Manrope',sans-serif; letter-spacing:-.06em; }
-hr { border-color:rgba(255,255,255,.1); }
-.hero { position:relative; overflow:hidden; padding:3rem 0 2rem; }
-.eyebrow { display:inline-flex; align-items:center; gap:8px; padding:7px 12px; border:1px solid rgba(255,255,255,.16); border-radius:999px; background:rgba(255,255,255,.055); color:#d6d8ff; font-size:.78rem; letter-spacing:.08em; text-transform:uppercase; }
-.spark { display:inline-block; background:linear-gradient(90deg,#fff,#b6b2ff,#9be2ff); -webkit-background-clip:text; background-clip:text; color:transparent; }
-.subhead { color:#aeb4c9; font-size:1.08rem; max-width:680px; line-height:1.75; }
-.glass-card { padding:22px; border:1px solid var(--line); border-radius:22px; background:linear-gradient(140deg,rgba(255,255,255,.075),rgba(255,255,255,.025)); height:100%; transition:transform .25s ease,border-color .25s ease; }
-.glass-card:hover { transform:translateY(-4px); border-color:rgba(177,182,255,.45); }
-.small-label { color:#9ea6c0; font-size:.76rem; text-transform:uppercase; letter-spacing:.12em; }
-.pill { display:inline-block; padding:6px 10px; margin:4px 5px 2px 0; border-radius:999px; background:rgba(153,151,255,.12); border:1px solid rgba(153,151,255,.24); color:#dedcff; font-size:.82rem; }
-.pill-missing { background:rgba(255,174,104,.09); border-color:rgba(255,174,104,.23); color:#ffd1a3; }
-.score-ring { font-family:'Manrope',sans-serif; font-size:3.2rem; font-weight:800; letter-spacing:-.08em; }
-.footer { color:#747d96; font-size:.82rem; text-align:center; padding-top:2.5rem; }
-@media (prefers-reduced-motion: reduce) { * { animation:none!important; transition:none!important; } }
+:root{--text:#f4f5fc;--muted:#9da5bd;--line:rgba(255,255,255,.105);--panel:rgba(255,255,255,.055)}
+html,body,[class*="css"]{font-family:'DM Sans',sans-serif}
+.stApp{color:var(--text);background:#080a12;background-image:radial-gradient(ellipse at 10% 0%,rgba(111,88,255,.24),transparent 35%),radial-gradient(ellipse at 95% 12%,rgba(64,195,255,.16),transparent 31%),radial-gradient(ellipse at 55% 105%,rgba(197,86,255,.1),transparent 45%);background-attachment:fixed}
+[data-testid="stHeader"]{background:rgba(8,10,18,.45)}
+.block-container{max-width:1450px;padding:1.25rem 2rem 3rem}
+h1,h2,h3{font-family:'Manrope',sans-serif!important;letter-spacing:-.04em}
+h1{font-weight:800!important;letter-spacing:-.07em}
+h2{font-weight:700!important}
+p,li{color:#d8dced}
+.small{color:var(--muted);font-size:.88rem}
+.eyebrow{display:inline-flex;padding:7px 12px;border-radius:999px;background:rgba(255,255,255,.055);border:1px solid var(--line);color:#c8c5ff;text-transform:uppercase;letter-spacing:.14em;font-size:.72rem}
+.hero{padding:1.5rem 0 1rem}
+.hero h1{font-size:clamp(2.6rem,5vw,4.9rem);line-height:1.0;margin:.8rem 0}
+.grad{background:linear-gradient(95deg,#fff 0%,#c7bfff 45%,#9ce7ff 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.glass{border:1px solid var(--line);border-radius:24px;padding:22px;background:linear-gradient(145deg,rgba(255,255,255,.085),rgba(255,255,255,.025));box-shadow:0 25px 80px rgba(0,0,0,.19);backdrop-filter:blur(24px);transition:transform .28s ease,border-color .28s ease,box-shadow .28s ease}
+.glass:hover{transform:translateY(-4px);border-color:rgba(182,180,255,.28);box-shadow:0 30px 100px rgba(0,0,0,.27)}
+.glass-lite{border:1px solid var(--line);border-radius:20px;padding:18px;background:rgba(255,255,255,.035)}
+.kicker{font-size:.72rem;letter-spacing:.13em;text-transform:uppercase;color:#9fa8c5}
+.bigmetric{font-family:'Manrope',sans-serif;font-size:2rem;letter-spacing:-.06em;font-weight:800;margin-top:6px}
+.pill{display:inline-flex;padding:5px 9px;border-radius:999px;font-size:.72rem;border:1px solid rgba(169,166,255,.25);background:rgba(140,130,255,.12);color:#d8d5ff}
+.stButton>button,.stDownloadButton>button{border-radius:999px;border:1px solid rgba(255,255,255,.16);background:linear-gradient(110deg,#dfddff,#9ce4ff);color:#101321;font-weight:700;transition:transform .2s,box-shadow .2s;padding:.6rem 1rem}
+.stButton>button:hover,.stDownloadButton>button:hover{transform:translateY(-2px);box-shadow:0 10px 35px rgba(132,130,255,.28);border-color:#fff}
+div[data-testid="stTextInput"] input,div[data-testid="stTextArea"] textarea,div[data-testid="stSelectbox"] div[data-baseweb="select"]{border-radius:14px;background:rgba(255,255,255,.045);color:#f4f5fc;border-color:var(--line)}
+div[data-testid="stMetric"]{background:rgba(255,255,255,.04);border:1px solid var(--line);padding:17px 18px;border-radius:19px}
+[data-testid="stMetricValue"]{font-family:'Manrope',sans-serif;letter-spacing:-.06em}
+[data-testid="stProgressBar"]>div{border-radius:999px;background:rgba(255,255,255,.09)}
+[data-testid="stProgressBar"]>div>div{background:linear-gradient(90deg,#9183ff,#83ddff)}
+hr{border-color:var(--line)}
+div[data-testid="stVerticalBlockBorderWrapper"]{border-color:var(--line);border-radius:22px;background:rgba(255,255,255,.025)}
+.footer{padding-top:2rem;text-align:center;color:#727c98;font-size:.78rem}
+.orb{height:180px;width:180px;border-radius:48% 52% 62% 38% / 47% 41% 59% 53%;margin:auto;background:radial-gradient(circle at 34% 27%,rgba(255,255,255,.9),rgba(183,175,255,.6) 8%,rgba(105,95,255,.65) 27%,rgba(56,173,255,.25) 53%,rgba(157,91,255,.08) 70%);box-shadow:inset -15px -18px 36px rgba(5,8,20,.55),inset 12px 10px 35px rgba(255,255,255,.22),0 0 55px rgba(120,113,255,.18);animation:floaty 7s ease-in-out infinite,turn 20s linear infinite}
+@keyframes floaty{0%,100%{transform:translateY(0) rotate(-7deg)}50%{transform:translateY(-13px) rotate(5deg)}}
+@keyframes turn{to{filter:hue-rotate(25deg)}}
+@keyframes pulse{0%,100%{opacity:.5;transform:scale(.97)}50%{opacity:1;transform:scale(1.02)}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+@media(max-width:780px){.block-container{padding:1rem .8rem 2rem}.glass{padding:17px}.hero h1{font-size:2.8rem}}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
-SKILL_GROUPS = {
-    "Programming": ["python", "java", "javascript", "typescript", "c++", "c#", "go", "rust", "sql", "r"],
-    "AI & Data": ["machine learning", "deep learning", "artificial intelligence", "llm", "generative ai", "rag", "nlp", "pandas", "numpy", "pytorch", "tensorflow", "scikit-learn", "data analysis", "data science", "computer vision", "langchain"],
-    "Web & APIs": ["html", "css", "react", "next.js", "node.js", "express", "fastapi", "flask", "django", "rest api", "graphql", "streamlit"],
-    "Cloud & DevOps": ["aws", "azure", "gcp", "docker", "kubernetes", "linux", "git", "github actions", "ci/cd", "terraform"],
-    "Databases": ["postgresql", "mysql", "mongodb", "redis", "sqlite", "firebase", "chroma"],
-    "Professional": ["communication", "leadership", "problem solving", "teamwork", "agile", "project management", "presentation"],
-}
-ALL_SKILLS = sorted({s for group in SKILL_GROUPS.values() for s in group})
+def progress_percent():
+    tasks = st.session_state.tasks
+    return int(100 * sum(1 for t in tasks if t["done"]) / max(1, len(tasks)))
 
-def extract_resume(upload):
-    if upload is None:
-        return ""
-    raw = upload.getvalue()
-    name = upload.name.lower()
-    try:
-        if name.endswith(".pdf"):
-            if PdfReader is None:
-                return ""
-            reader = PdfReader(io.BytesIO(raw))
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
-        if name.endswith(".docx"):
-            if Document is None:
-                return ""
-            doc = Document(io.BytesIO(raw))
-            return "\n".join(p.text for p in doc.paragraphs)
-        return raw.decode("utf-8", errors="ignore")
-    except Exception:
-        return ""
+def priority_color(priority):
+    return {"High": "#ffb2c1", "Medium": "#d7c6ff", "Low": "#a6e8dc"}.get(priority, "#cbd1e7")
 
-def clean_text(text):
-    return re.sub(r"\s+", " ", (text or "").lower()).strip()
+def render_task(task):
+    mark = "✓" if task["done"] else "○"
+    faded = "opacity:.5;text-decoration:line-through;" if task["done"] else ""
+    st.markdown(
+        f'<div class="glass-lite" style="margin-bottom:9px;{faded}">'
+        f'<div style="display:flex;align-items:center;gap:10px">'
+        f'<span style="font-size:1.2rem;color:{priority_color(task["priority"])}">{mark}</span>'
+        f'<div style="flex:1"><b>{task["title"]}</b><div class="small">{task["project"]} · Due {task["due"]}</div></div>'
+        f'<span class="pill">{task["priority"]}</span></div></div>',
+        unsafe_allow_html=True,
+    )
 
-def detect_skills(text):
-    source = clean_text(text)
-    found = []
-    for skill in ALL_SKILLS:
-        pattern = r"(?<![a-z0-9])" + re.escape(skill.lower()) + r"(?![a-z0-9])"
-        if re.search(pattern, source):
-            found.append(skill)
-    return found
+# Main header/nav
+nav_cols = st.columns([1.5, 4.4, 1.1])
+with nav_cols[0]:
+    st.markdown('<div style="font-family:Manrope;font-weight:800;font-size:1.25rem;letter-spacing:-.06em">✦ neural<span class="grad">desk</span></div><div class="small">FOCUS OPERATING SYSTEM</div>', unsafe_allow_html=True)
+with nav_cols[1]:
+    active_view = st.radio("Navigation", ["Overview", "Tasks", "Focus", "Insights"], horizontal=True, label_visibility="collapsed", key="nav")
+with nav_cols[2]:
+    st.markdown('<div style="text-align:right;padding-top:5px"><span class="pill">● LOCAL MODE</span></div>', unsafe_allow_html=True)
+st.markdown('<div style="height:1px;background:linear-gradient(90deg,transparent,rgba(175,174,255,.3),transparent);margin:15px 0 20px"></div>', unsafe_allow_html=True)
 
-def score_match(resume_text, job_text):
-    resume_skills = set(detect_skills(resume_text))
-    job_skills = set(detect_skills(job_text))
-    matched = sorted(resume_skills & job_skills)
-    missing = sorted(job_skills - resume_skills)
-    if job_skills:
-        score = round(100 * len(matched) / len(job_skills))
-    else:
-        resume_words = set(re.findall(r"\b[a-z][a-z+#.]{2,}\b", clean_text(resume_text)))
-        job_words = set(re.findall(r"\b[a-z][a-z+#.]{2,}\b", clean_text(job_text)))
-        stop = {"the","and","for","with","you","our","are","will","this","that","from","have","has","your","job","role","work","years","year"}
-        job_words -= stop
-        score = round(100 * len(resume_words & job_words) / max(1, len(job_words)))
-        matched = sorted(resume_words & job_words)[:30]
-        missing = sorted(job_words - resume_words)[:30]
-    return score, matched, missing, sorted(resume_skills), sorted(job_skills)
+tasks = st.session_state.tasks
+done = sum(t["done"] for t in tasks)
+total = len(tasks)
+today = date.today().strftime("%A, %d %B")
 
-def make_questions(job_text, missing):
-    role = "this role"
-    lines = [x.strip(" •\t-") for x in (job_text or "").splitlines() if x.strip()]
-    for line in lines[:8]:
-        if len(line) > 12 and len(line) < 100:
-            role = line
-            break
-    questions = [
-        f"Walk me through your background and why it fits {role}.",
-        "Describe a project where you solved a difficult technical problem. What trade-offs did you make?",
-        "Tell me about a time you had to learn a new tool or concept quickly.",
-        "How do you test your work and make sure the result is reliable?",
-        "Describe a time you received critical feedback and how you responded.",
-    ]
-    for skill in missing[:3]:
-        questions.append(f"What do you know about {skill}, and how would you apply it in a practical project?")
-    return questions
+if active_view == "Overview":
+    a, b = st.columns([1.7, 1], gap="large")
+    with a:
+        st.markdown(f'<div class="hero"><div class="eyebrow">✦ YOUR SPACE, REIMAGINED</div><h1>Make room for<br><span class="grad">deep work.</span></h1><p style="color:#a9b1c8;max-width:600px;line-height:1.8">One calm place for your tasks, focus sessions, and momentum. Keep the signal. Leave the noise.</p><div class="small">{today} &nbsp;·&nbsp; A fresh page, ready when you are.</div></div>', unsafe_allow_html=True)
+    with b:
+        st.markdown('<div class="glass" style="text-align:center;height:260px;display:flex;flex-direction:column;justify-content:center"><div class="orb"></div><div style="font-size:.8rem;color:#bac3df;margin-top:14px;letter-spacing:.08em">YOUR MIND, IN FLOW</div></div>', unsafe_allow_html=True)
+    st.markdown("")
+    cols = st.columns(4)
+    cols[0].metric("Tasks captured", total, "Keep it clear")
+    cols[1].metric("Completed", done, f"{progress_percent()}% of your list")
+    cols[2].metric("Open priorities", sum(1 for t in tasks if not t["done"] and t["priority"] == "High"), "High priority")
+    cols[3].metric("Focus mode", "25 min", "Pomodoro default")
+    left, right = st.columns([1.25, .75], gap="large")
+    with left:
+        st.markdown('<div class="glass"><div class="kicker">TODAY · MOMENTUM</div><h3 style="margin:.3rem 0 1rem">Your action board</h3></div>', unsafe_allow_html=True)
+        open_tasks = [t for t in tasks if not t["done"]]
+        if not open_tasks:
+            st.success("All clear — you've completed every task in your list.")
+        for task in open_tasks[:5]:
+            render_task(task)
+        if st.button("Open task manager →", key="overview_tasks", use_container_width=True):
+            st.session_state.nav = "Tasks"
+            st.rerun()
+    with right:
+        st.markdown('<div class="glass"><div class="kicker">A LITTLE STRUCTURE</div><h3 style="margin:.3rem 0 .6rem">Daily progress</h3><div class="small">Small wins create durable momentum.</div></div>', unsafe_allow_html=True)
+        st.progress(progress_percent() / 100)
+        st.markdown(f'<div style="display:flex;justify-content:space-between"><span class="small">Completed</span><b>{done}/{total}</b></div>', unsafe_allow_html=True)
+        st.markdown('<div class="glass-lite" style="margin-top:16px"><div class="kicker">TODAY\'S RESET</div><p style="line-height:1.75">Pick one important task. Mute the distractions. Give it 25 honest minutes.</p></div>', unsafe_allow_html=True)
 
-def badge_list(items, missing=False):
-    if not items:
-        return '<span style="color:#8d95ad">No clear matches found yet.</span>'
-    klass = "pill-missing" if missing else "pill"
-    return "".join(f'<span class="{klass}">{html.escape(str(item))}</span>' for item in items)
-
-st.markdown("""
-<div class="hero">
-  <div class="eyebrow">✦ NEXTROLE <span style="opacity:.5">/</span> CAREER STUDIO</div>
-  <h1 style="margin-top:22px">Make your next move<br><span class="spark">feel inevitable.</span></h1>
-  <p class="subhead">A calmer, smarter way to prepare for your next opportunity. Compare your resume with a job description, discover skill gaps, and walk into interviews with a plan.</p>
-</div>
-""", unsafe_allow_html=True)
-
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.markdown('<div class="glass-card"><div class="small-label">01 · Understand</div><h3>Resume intelligence</h3><p style="color:#aeb4c9">Extract the skills your resume actually communicates.</p></div>', unsafe_allow_html=True)
-with c2:
-    st.markdown('<div class="glass-card"><div class="small-label">02 · Align</div><h3>Role fit analysis</h3><p style="color:#aeb4c9">See matching strengths and missing keywords at a glance.</p></div>', unsafe_allow_html=True)
-with c3:
-    st.markdown('<div class="glass-card"><div class="small-label">03 · Prepare</div><h3>Interview practice</h3><p style="color:#aeb4c9">Turn your gaps into focused practice questions.</p></div>', unsafe_allow_html=True)
-
-st.markdown("## Your career workspace")
-st.markdown("<p style='color:#9fa7c0'>Your text stays in this app session. No AI API key is required; analysis uses transparent local keyword matching, not a hosted LLM.</p>", unsafe_allow_html=True)
-
-left, right = st.columns([0.9, 1.1], gap="large")
-with left:
+elif active_view == "Tasks":
+    st.markdown('<div class="hero"><div class="eyebrow">TASK MANAGER</div><h1>Your ideas,<br><span class="grad">in motion.</span></h1><p class="small">Capture the next step, set its priority, and move it forward.</p></div>', unsafe_allow_html=True)
     with st.container(border=True):
-        st.markdown("### Your resume")
-        upload = st.file_uploader("Upload PDF, DOCX or TXT", type=["pdf", "docx", "txt"], help="For best results, use a text-based PDF rather than a scanned image.")
-        resume_text = extract_resume(upload)
-        if upload is not None and not resume_text.strip():
-            st.warning("We couldn't extract text from that file. Try a text-based PDF, DOCX or TXT file.")
-        resume_text = st.text_area("Or paste resume text", value=resume_text, height=250, placeholder="Paste your resume here: summary, skills, projects, education and experience...")
-        st.caption("Tip: include project details and tools you used. Do not add skills you cannot discuss honestly.")
-with right:
-    with st.container(border=True):
-        st.markdown("### Target opportunity")
-        role_title = st.text_input("Role title (optional)", placeholder="e.g. Junior Python Developer")
-        job_text = st.text_area("Job description", height=320, placeholder="Paste the complete job description here, including responsibilities and requirements...")
-        st.caption("A detailed job description gives a more useful comparison.")
+        with st.form("new_task_form", clear_on_submit=True):
+            title = st.text_input("Task title", placeholder="What would you like to move forward?")
+            c1, c2, c3 = st.columns(3)
+            project = c1.text_input("Project", value="Personal")
+            priority = c2.selectbox("Priority", ["High", "Medium", "Low"], index=1)
+            due = c3.selectbox("Due", ["Today", "Tomorrow", "This week", "Someday"])
+            submitted = st.form_submit_button("＋ Add task")
+            if submitted:
+                if title.strip():
+                    st.session_state.tasks.insert(0, {"id": st.session_state.task_counter, "title": title.strip(), "project": project.strip() or "Personal", "priority": priority, "done": False, "due": due})
+                    st.session_state.task_counter += 1
+                    st.success("Task added.")
+                    st.rerun()
+                else:
+                    st.warning("Enter a task title first.")
+    st.markdown("### Your list")
+    filter_by = st.selectbox("Show tasks", ["All tasks", "Open only", "Completed only"])
+    visible = [t for t in st.session_state.tasks if filter_by == "All tasks" or (filter_by == "Open only" and not t["done"]) or (filter_by == "Completed only" and t["done"])]
+    if not visible:
+        st.info("Nothing here yet. Add a task above to get started.")
+    for task in visible:
+        c1, c2, c3 = st.columns([.08, .72, .2], vertical_alignment="center")
+        with c1:
+            new_done = st.checkbox("Done", value=task["done"], key=f"done_{task['id']}", label_visibility="collapsed")
+            if new_done != task["done"]:
+                for item in st.session_state.tasks:
+                    if item["id"] == task["id"]:
+                        item["done"] = new_done
+                st.rerun()
+        with c2:
+            st.markdown(f'**{task["title"]}**  <span class="small">· {task["project"]} · {task["due"]}</span>', unsafe_allow_html=True)
+        with c3:
+            st.markdown(f'<span class="pill">{task["priority"]}</span>', unsafe_allow_html=True)
+    if st.session_state.tasks:
+        with st.expander("Maintenance"):
+            remove_done = st.button("Clear completed tasks")
+            if remove_done:
+                st.session_state.tasks = [t for t in st.session_state.tasks if not t["done"]]
+                st.rerun()
+            st.download_button("Export task list (JSON)", json.dumps(st.session_state.tasks, indent=2), file_name="neuraldesk-tasks.json", mime="application/json")
 
-analyze = st.button("✦  Analyze my fit", type="primary", use_container_width=True)
-if analyze:
-    if len(resume_text.strip()) < 40:
-        st.error("Add a little more resume text before analyzing.")
-    elif len(job_text.strip()) < 40:
-        st.error("Paste the job description so NextRole can compare both sides.")
+elif active_view == "Focus":
+    st.markdown('<div class="hero"><div class="eyebrow">FOCUS MODE</div><h1>Enter your<br><span class="grad">flow state.</span></h1><p class="small">One session. One intention. Fewer interruptions.</p></div>', unsafe_allow_html=True)
+    left, right = st.columns([1, 1], gap="large")
+    with left:
+        st.markdown('<div class="glass" style="text-align:center;padding:35px 20px"><div class="kicker">POMODORO SESSION</div></div>', unsafe_allow_html=True)
+        mins, secs = divmod(max(0, int(st.session_state.focus_seconds)), 60)
+        st.markdown(f'<div class="glass" style="text-align:center;margin-top:12px"><div style="font-family:Manrope;font-size:clamp(3.5rem,8vw,5.5rem);font-weight:800;letter-spacing:-.08em">{mins:02d}:{secs:02d}</div><div class="small">{"Session running" if st.session_state.timer_running else "Ready when you are"}</div></div>', unsafe_allow_html=True)
+        p1, p2, p3 = st.columns(3)
+        if p1.button("▶ Start / resume", use_container_width=True):
+            st.session_state.timer_running = True
+            st.session_state.timer_last = time.time()
+            st.rerun()
+        if p2.button("Ⅱ Pause", use_container_width=True):
+            st.session_state.timer_running = False
+            st.rerun()
+        if p3.button("↺ Reset", use_container_width=True):
+            st.session_state.timer_running = False
+            st.session_state.focus_seconds = 25 * 60
+            st.session_state.timer_last = time.time()
+            st.rerun()
+        if st.session_state.timer_running:
+            elapsed = time.time() - st.session_state.timer_last
+            st.session_state.focus_seconds = max(0, st.session_state.focus_seconds - int(elapsed))
+            st.session_state.timer_last = time.time()
+            if st.session_state.focus_seconds <= 0:
+                st.session_state.timer_running = False
+                st.success("Focus session complete. Take a mindful break.")
+            else:
+                st.info("Timer is running while this page is active. Streamlit refreshes may be needed for a live countdown.")
+                if st.button("Refresh timer"):
+                    st.rerun()
+        length = st.select_slider("Session length", options=[15, 20, 25, 30, 45, 60], value=25, format_func=lambda x: f"{x} min")
+        if st.button("Set session length"):
+            st.session_state.focus_seconds = int(length * 60)
+            st.session_state.timer_running = False
+            st.rerun()
+    with right:
+        st.markdown('<div class="glass"><div class="kicker">YOUR INTENTION</div><h3>Before you begin</h3><p style="color:#aab2c9;line-height:1.8">Write one clear outcome for this focus block. A smaller finish line is easier to start and easier to cross.</p></div>', unsafe_allow_html=True)
+        intention = st.text_area("What will you work on?", placeholder="For the next 25 minutes, I will…", height=120, key="focus_intention")
+        if st.button("Save intention"):
+            st.session_state.saved_intention = intention.strip()
+            st.success("Intention saved for this session.")
+        if st.session_state.get("saved_intention"):
+            st.markdown(f'<div class="glass-lite"><div class="kicker">CURRENT INTENTION</div><p>{st.session_state.saved_intention}</p></div>', unsafe_allow_html=True)
+        st.markdown('<div class="glass-lite" style="margin-top:14px"><b>Focus ritual</b><p class="small" style="line-height:1.8">1. Close one distraction. 2. Keep one tab open. 3. Start before you feel ready. 4. Stop when the timer ends.</p></div>', unsafe_allow_html=True)
+
+elif active_view == "Insights":
+    st.markdown('<div class="hero"><div class="eyebrow">INSIGHTS</div><h1>Progress you<br><span class="grad">can see.</span></h1><p class="small">A live view of the tasks you have captured in this session.</p></div>', unsafe_allow_html=True)
+    if not st.session_state.tasks:
+        st.info("Add a few tasks to see insights.")
     else:
-        score, matched, missing, resume_skills, job_skills = score_match(resume_text, job_text)
-        st.session_state["analysis"] = {
-            "score": score, "matched": matched, "missing": missing,
-            "resume_skills": resume_skills, "job_skills": job_skills,
-            "questions": make_questions(job_text, missing),
-            "role": role_title.strip() or "Target role",
-        }
+        df = pd.DataFrame(st.session_state.tasks)
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Completion rate", f"{progress_percent()}%")
+        s2.metric("High priority open", int(((df.priority == "High") & (~df.done)).sum()))
+        s3.metric("Projects", int(df.project.nunique()))
+        pcol, qcol = st.columns(2, gap="large")
+        with pcol:
+            by_status = df.assign(Status=df.done.map({True:"Completed",False:"Open"})).groupby("Status").size().reset_index(name="Tasks")
+            fig = px.pie(by_status, values="Tasks", names="Status", hole=.72, title="Your task balance", color_discrete_sequence=["#9b91ff","#66d5ef"])
+            fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#eef0ff", title_font_color="#f4f5fc", legend_title_text="", margin=dict(l=10,r=10,t=52,b=10))
+            fig.update_traces(textposition="inside", textinfo="percent+label", marker=dict(line=dict(color="#11131d", width=3)))
+            st.plotly_chart(fig, use_container_width=True)
+        with qcol:
+            by_project = df.groupby("project").size().reset_index(name="Tasks").sort_values("Tasks", ascending=True)
+            fig2 = px.bar(by_project, x="Tasks", y="project", orientation="h", title="Tasks by project", color="Tasks", color_continuous_scale=["#60d9ee","#9285ff"])
+            fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#eef0ff", title_font_color="#f4f5fc", coloraxis_showscale=False, margin=dict(l=10,r=15,t=52,b=10), yaxis_title="", xaxis_title="")
+            fig2.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,.08)")
+            fig2.update_yaxes(showgrid=False)
+            st.plotly_chart(fig2, use_container_width=True)
+        st.markdown("### Next best move")
+        open_high = [t for t in st.session_state.tasks if not t["done"] and t["priority"] == "High"]
+        if open_high:
+            st.markdown(f'<div class="glass"><div class="kicker">HIGH PRIORITY</div><h3>{open_high[0]["title"]}</h3><p class="small">Start here, then reassess your list after a focus block.</p></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="glass"><h3>Protect your momentum</h3><p class="small">No high-priority open tasks. Pick the task that moves your main goal forward.</p></div>', unsafe_allow_html=True)
 
-if "analysis" in st.session_state:
-    data = st.session_state["analysis"]
-    st.markdown("---")
-    st.markdown("## Your fit snapshot")
-    st.markdown(f"<p style='color:#aab1c7'>Analysis for <b>{html.escape(data['role'])}</b> · based on detected skills and text overlap</p>", unsafe_allow_html=True)
-    a, b, c, d = st.columns(4)
-    a.metric("Role match", f"{data['score']}%")
-    b.metric("Skills matched", len(data["matched"]))
-    c.metric("Potential gaps", len(data["missing"]))
-    d.metric("Resume skills found", len(data["resume_skills"]))
-
-    progress = max(0, min(100, data["score"]))
-    st.markdown(f"""
-    <div style="height:10px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden;margin:14px 0 26px">
-      <div style="height:100%;width:{progress}%;border-radius:99px;background:linear-gradient(90deg,#9b92ff,#9be7ff);box-shadow:0 0 24px rgba(153,151,255,.45);transition:width .8s ease"></div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    if data["score"] >= 75:
-        st.success("Strong keyword alignment. Make sure your resume proves the skills with specific outcomes.")
-    elif data["score"] >= 45:
-        st.info("Some alignment is visible. Focus on relevant project evidence and the most important missing skills.")
-    else:
-        st.warning("The keyword overlap looks limited. Check whether this role is a fit and tailor your resume truthfully.")
-
-    t1, t2, t3 = st.tabs(["✧ Strengths", "↗ Skill gaps", "◎ Interview prep"])
-    with t1:
-        st.markdown("### Skills already aligned")
-        st.markdown(badge_list(data["matched"]), unsafe_allow_html=True)
-        st.markdown("### Skills detected in your resume")
-        st.markdown(badge_list(data["resume_skills"]), unsafe_allow_html=True)
-    with t2:
-        st.markdown("### Skills to investigate")
-        st.markdown(badge_list(data["missing"], True), unsafe_allow_html=True)
-        st.caption("A missing keyword does not prove you lack the skill. It may simply be described differently or omitted from your resume.")
-        if data["missing"]:
-            st.markdown("**A practical next step**")
-            st.write("Choose one or two gaps that genuinely matter for the role. Learn the basics, build a small demonstrable project, and add evidence only after you have done the work.")
-    with t3:
-        st.markdown("### Questions to rehearse")
-        for i, question in enumerate(data["questions"], 1):
-            with st.container(border=True):
-                st.markdown(f"**{i:02d}**  {question}")
-        st.markdown("### Use the STAR structure")
-        st.write("**Situation** — set the context. **Task** — explain your responsibility. **Action** — describe what you did. **Result** — share the outcome and what you learned.")
-
-    report = [
-        "NEXTROLE — CAREER FIT REPORT",
-        f"Role: {data['role']}",
-        f"Keyword alignment score: {data['score']}%",
-        f"Matched skills: {', '.join(data['matched']) or 'None detected'}",
-        f"Potential gaps: {', '.join(data['missing']) or 'None detected'}",
-        "",
-        "INTERVIEW PRACTICE",
-        *[f"{i}. {q}" for i, q in enumerate(data["questions"], 1)],
-        "",
-        "Note: This is a local keyword heuristic, not an AI hiring decision or a prediction of interview success.",
-    ]
-    st.download_button("↓  Download my report", "\n".join(report), file_name="nextrole-career-report.txt", mime="text/plain")
-    st.caption("Fairness note: this score is an approximate keyword signal only. It does not evaluate seniority, experience quality, communication, context, or real hiring decisions.")
-
-st.markdown('<div class="footer">NEXTROLE · A focused space for your next chapter<br>Designed with a quiet, Apple-inspired aesthetic · No API key required</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer">NEURALDESK · FOCUS OPERATING SYSTEM<br>Built with Streamlit, Plotly & a little calm. Data is held in the current Streamlit session; export tasks to keep a copy.</div>', unsafe_allow_html=True)
